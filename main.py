@@ -1,9 +1,19 @@
+import os
 import random
 import math
+import sys
+
+import matplotlib
+
+# Fall back to the non-interactive Agg backend when no display is available
+# (headless Linux / SSH sessions) so the run still produces the PNG outputs.
+if sys.platform.startswith("linux") and not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+    matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
 import numpy as np
 
-#config
+# Config
 RANDOM_SEED       = 42          # for reproducibility
 GRID_SIZE         = 20.0        # city is 20x20 miles
 N_CANDIDATES      = 10          # candidate charging station locations
@@ -11,7 +21,7 @@ N_DEMAND_POINTS   = 50          # resident / demand locations
 K_STATIONS        = 3           # number of stations to place
 COVERAGE_RADIUS   = 5.0         # miles — a station covers demand within this radius
 
-#GA parameters (these are changed in experiments)
+# GA parameters (these are varied in the experiments)
 POP_SIZE          = 50
 N_GENERATIONS     = 200
 CROSSOVER_RATE    = 0.85
@@ -23,10 +33,10 @@ W_COST            = 0.3         # weight for cost in fitness
 random.seed(RANDOM_SEED)
 np.random.seed(RANDOM_SEED)
 
-#dataset
+# Dataset
 
 def generate_dataset():
-    #manually seeded to create an interesting optimization landscape
+    # Manually seeded to create an interesting optimization landscape
     candidate_coords = [
         (4.0,  4.0),   
         (4.0,  16.0),  
@@ -40,10 +50,10 @@ def generate_dataset():
         (6.0,  7.0),   
     ]
 
-    #installation costs 
+    # Installation costs ($K) per candidate location
     costs = [80, 75, 70, 72, 200, 150, 145, 130, 135, 110]
 
-    #demand points
+    # Demand points: a clustered downtown core plus uniform sprawl
     np.random.seed(RANDOM_SEED)
     demand_coords = []
     for _ in range(25):
@@ -73,13 +83,13 @@ def build_coverage_matrix(candidate_coords, demand_coords, radius):
                 coverage[i][j] = 1
     return coverage
 
-#fitness func as described in the report
+# Fitness function as described in the report
 def fitness(chromosome, coverage_matrix, costs, k,
             w_cov=W_COVERAGE, w_cost=W_COST):
     selected = [i for i, gene in enumerate(chromosome) if gene == 1]
     n_selected = len(selected)
 
-    #penalty
+    # Penalty for selecting more or fewer than k stations
     penalty = 0.0
     if n_selected != k:
         penalty = 1.0 * abs(n_selected - k)
@@ -87,7 +97,7 @@ def fitness(chromosome, coverage_matrix, costs, k,
     if n_selected == 0:
         return -penalty
 
-    #coverage
+    # Coverage ratio: fraction of demand points within radius of a station
     n_demand = len(coverage_matrix[0])
     covered = set()
     for i in selected:
@@ -96,7 +106,7 @@ def fitness(chromosome, coverage_matrix, costs, k,
                 covered.add(j)
     coverage_ratio = len(covered) / n_demand
 
-    #cost ratio 
+    # Cost ratio, normalized against the k most expensive candidates
     sorted_costs = sorted(costs, reverse=True)
     max_possible_cost = sum(sorted_costs[:k])
     total_cost = sum(costs[i] for i in selected)
@@ -118,7 +128,7 @@ def decode_solution(chromosome, coverage_matrix, costs, k):
     total_cost = sum(costs[i] for i in selected)
     return selected, coverage_pct, total_cost, len(covered)
 
-#ga operations
+# GA operators
 def create_chromosome(n, k):
     chrom = [0] * n
     selected = random.sample(range(n), k)
@@ -189,7 +199,7 @@ def swap_mutate(chromosome, mutation_rate, k):
 
     return chrom
 
-#main loop
+# Main GA loop
 def run_ga(coverage_matrix, costs, n, k,
            pop_size=POP_SIZE, n_generations=N_GENERATIONS,
            crossover_rate=CROSSOVER_RATE, mutation_rate=MUTATION_RATE,
@@ -202,11 +212,11 @@ def run_ga(coverage_matrix, costs, n, k,
     avg_fitness_history  = []
 
     for gen in range(n_generations):
-        #evaluate fitness
+        # Evaluate fitness
         fitnesses = [fitness(chrom, coverage_matrix, costs, k, w_cov, w_cost)
                      for chrom in population]
 
-        #track best
+        # Track the best individual
         gen_best_idx = max(range(pop_size), key=lambda i: fitnesses[i])
         gen_best_fit = fitnesses[gen_best_idx]
         gen_avg_fit  = sum(fitnesses) / pop_size
@@ -222,10 +232,10 @@ def run_ga(coverage_matrix, costs, n, k,
             print(f"  Gen {gen:>4}: Best Fitness = {gen_best_fit:.4f} | "
                   f"Avg = {gen_avg_fit:.4f}")
 
-        #elitism implementation
+        # Elitism: carry the generation's best into the next population
         elite = population[gen_best_idx][:]
 
-        #build next generation
+        # Build next generation
         new_population = [elite]
 
         while len(new_population) < pop_size:
@@ -234,11 +244,11 @@ def run_ga(coverage_matrix, costs, n, k,
 
             child1, child2 = uniform_crossover(parent1, parent2, crossover_rate)
 
-            #repair children to have exactly k stations
+            # Repair children to have exactly k stations
             child1 = repair(child1, k)
             child2 = repair(child2, k)
 
-            #mutation
+            # Mutation
             child1 = swap_mutate(child1, mutation_rate, k)
             child2 = swap_mutate(child2, mutation_rate, k)
 
@@ -250,7 +260,7 @@ def run_ga(coverage_matrix, costs, n, k,
 
     return best_chromosome, best_fitness_history, avg_fitness_history
 
-#graphing data 
+# Plotting
 def plot_convergence(histories, labels, title="GA Convergence"):
     fig, ax = plt.subplots(figsize=(10, 5))
     colors = ['#2196F3', '#F44336', '#4CAF50', '#FF9800']
@@ -273,12 +283,12 @@ def plot_city(candidate_coords, demand_coords, selected_stations, costs,
               coverage_radius=COVERAGE_RADIUS):
     fig, ax = plt.subplots(figsize=(8, 8))
 
-    #demand points
+    # Demand points
     dx = [p[0] for p in demand_coords]
     dy = [p[1] for p in demand_coords]
     ax.scatter(dx, dy, c='#90CAF9', s=30, zorder=2, label='Demand Points')
 
-    #all candidates (not selected)
+    # Unselected candidates
     not_selected = [i for i in range(len(candidate_coords))
                     if i not in selected_stations]
     for i in not_selected:
@@ -287,7 +297,7 @@ def plot_city(candidate_coords, demand_coords, selected_stations, costs,
         ax.annotate(f"C{i}\n${costs[i]}K", (x, y),
                     textcoords="offset points", xytext=(5, 5), fontsize=7, color='gray')
 
-    #selected stations + coverage circles
+    # Selected stations + coverage circles
     colors_sel = ['#E53935', '#43A047', '#8E24AA']
     for idx, i in enumerate(selected_stations):
         x, y = candidate_coords[i]
@@ -313,7 +323,7 @@ def plot_city(candidate_coords, demand_coords, selected_stations, costs,
     plt.show()
     print("Saved: city_map.png")
 
-#testing
+# Experiments
 def run_experiment(label, candidate_coords, demand_coords, costs, coverage_matrix,
                    **ga_kwargs):
     n = len(candidate_coords)
@@ -327,20 +337,26 @@ def run_experiment(label, candidate_coords, demand_coords, costs, coverage_matri
     selected, cov_pct, total_cost, n_covered = decode_solution(
         best_chrom, coverage_matrix, costs, k
     )
-    best_fitness_val = fitness(best_chrom, coverage_matrix, costs, k)
+    # Score with the same weights the experiment ran with — otherwise the
+    # cost-biased experiment would be reported using the default weights.
+    best_fitness_val = fitness(
+        best_chrom, coverage_matrix, costs, k,
+        w_cov=ga_kwargs.get("w_cov", W_COVERAGE),
+        w_cost=ga_kwargs.get("w_cost", W_COST),
+    )
     print(f"\n  Selected Stations : {selected}")
     print(f"  Coverage          : {cov_pct:.1f}% ({n_covered}/{N_DEMAND_POINTS} demand points)")
     print(f"  Total Cost        : ${total_cost}K")
     print(f"  Best Fitness Score: {best_fitness_val:.4f}")
     return best_chrom, best_hist, avg_hist, selected, cov_pct, total_cost
 
-#main
+# Main
 if __name__ == "__main__":
     print("=" * 55)
     print("EV Charging Station Optimization — Genetic Algorithm")
     print("=" * 55)
 
-    #dataset
+    # Dataset
     candidate_coords, costs, demand_coords = generate_dataset()
     coverage_matrix = build_coverage_matrix(
         candidate_coords, demand_coords, COVERAGE_RADIUS
@@ -364,7 +380,7 @@ if __name__ == "__main__":
     all_histories = []
     all_labels    = []
 
-    #experiment 1: baseline
+    # Experiment 1: baseline
     chrom1, best1, avg1, sel1, cov1, cost1 = run_experiment(
         "Baseline (pop=50, mut=0.15, cx=0.85)",
         candidate_coords, demand_coords, costs, coverage_matrix,
@@ -373,7 +389,7 @@ if __name__ == "__main__":
     all_histories.append((best1, avg1))
     all_labels.append("Baseline")
 
-    #experiment 2: high mutation rate
+    # Experiment 2: high mutation rate
     chrom2, best2, avg2, sel2, cov2, cost2 = run_experiment(
         "High Mutation (mut=0.40)",
         candidate_coords, demand_coords, costs, coverage_matrix,
@@ -382,7 +398,7 @@ if __name__ == "__main__":
     all_histories.append((best2, avg2))
     all_labels.append("High Mutation")
 
-    #experiment 3: large population
+    # Experiment 3: large population
     chrom3, best3, avg3, sel3, cov3, cost3 = run_experiment(
         "Large Population (pop=150)",
         candidate_coords, demand_coords, costs, coverage_matrix,
@@ -391,7 +407,7 @@ if __name__ == "__main__":
     all_histories.append((best3, avg3))
     all_labels.append("Large Population")
 
-    #experiment 4: cost-biased weights
+    # Experiment 4: cost-biased weights
     chrom4, best4, avg4, sel4, cov4, cost4 = run_experiment(
         "Cost-Biased (w_cov=0.4, w_cost=0.6)",
         candidate_coords, demand_coords, costs, coverage_matrix,
@@ -401,7 +417,7 @@ if __name__ == "__main__":
     all_histories.append((best4, avg4))
     all_labels.append("Cost-Biased")
 
-    #convergence Plot
+    # Convergence plot
     plot_convergence(all_histories, all_labels,
                      title="GA Convergence — EV Charging Station Optimization")
 
